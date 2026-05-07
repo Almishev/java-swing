@@ -25,6 +25,8 @@ public class ShiftRow {
         return id;
     }
 
+    
+
     public long employeeId() {
         return employeeId;
     }

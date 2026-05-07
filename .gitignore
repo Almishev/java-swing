@@ -26,4 +26,9 @@ bin/
 .vscode/
 
 ### Mac OS ###
-.DS_Store
+.DS_Storepackage/
+out/
+out-classes/
+target/
+data/*.db
+data/*.trace.db

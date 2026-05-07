@@ -559,6 +559,7 @@ public final class MainFrame extends JFrame {
                 if (r >= 0) {
                     final int selRow = r;
                     SwingUtilities.invokeLater(() -> {
+                        if (selRow < 0 || selRow >= dayTable.getRowCount()) return;
                         dayTable.setRowSelectionInterval(selRow, selRow);
                         Rectangle cell = dayTable.getCellRect(selRow, 0, true);
                         if (cell != null) dayTable.scrollRectToVisible(cell);
