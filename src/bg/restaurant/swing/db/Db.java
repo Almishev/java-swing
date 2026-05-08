@@ -1,5 +1,6 @@
 package bg.restaurant.swing.db;
 
+import java.nio.file.Files;
 import java.nio.file.Path;
 import java.sql.Driver;
 import java.sql.Connection;
@@ -8,9 +9,12 @@ import java.sql.DriverPropertyInfo;
 import java.sql.SQLException;
 import java.sql.Statement;
 import java.sql.PreparedStatement;
+import java.io.IOException;
 import java.net.URL;
 import java.net.URLClassLoader;
+import java.util.Locale;
 import java.util.Properties;
+import java.util.UUID;
 import java.util.logging.Logger;
 
 public final class Db {
@@ -20,10 +24,58 @@ public final class Db {
 
     public static Connection connect() throws SQLException {
         ensureDriverLoaded();
-        // File-based H2 DB stored in ./data/worktime (relative to project/run dir)
-        String dbPath = Path.of("data", "worktime").toAbsolutePath().toString().replace("\\", "/");
-        String url = "jdbc:h2:file:" + dbPath + ";AUTO_SERVER=TRUE;MODE=PostgreSQL";
+        // Prefer ./data when writable (development). Packaged installers often run under
+        // install dirs (e.g. Program Files) where ./data fails — then use per-user folder.
+        Path dbStem = resolveWorktimeDbStem();
+        String dbPath = dbStem.toAbsolutePath().normalize().toString().replace("\\", "/");
+        String url = "jdbc:h2:file:" + dbPath + ";MODE=PostgreSQL";
         return DriverManager.getConnection(url, "sa", "");
+    }
+
+    /** H2 stem path without extension (.mv.db is added by engine). */
+    private static Path resolveWorktimeDbStem() throws SQLException {
+        Path cwdData = Path.of("data").toAbsolutePath().normalize();
+        if (isDirectoryWritableProbe(cwdData)) {
+            return cwdData.resolve("worktime");
+        }
+        Path userDataDir = writableAppDataRoot().resolve("data");
+        try {
+            Files.createDirectories(userDataDir);
+        } catch (IOException e) {
+            throw new SQLException("Не може да се подготви директория за база: " + userDataDir, e);
+        }
+        if (!isDirectoryWritableProbe(userDataDir)) {
+            throw new SQLException(
+                    "Няма права за запис в " + userDataDir + ". Пробвай като локална инсталация без Program Files или изпълни с администратор.");
+        }
+        return userDataDir.resolve("worktime");
+    }
+
+    private static boolean isDirectoryWritableProbe(Path dir) {
+        try {
+            Files.createDirectories(dir);
+            Path probe = dir.resolve(".wt_probe_" + UUID.randomUUID());
+            Files.writeString(probe, "");
+            Files.delete(probe);
+            return true;
+        } catch (Exception ignored) {
+            return false;
+        }
+    }
+
+    private static Path writableAppDataRoot() {
+        String os = System.getProperty("os.name", "").toLowerCase(Locale.ROOT);
+        if (os.contains("windows")) {
+            String localApp = System.getenv("LOCALAPPDATA");
+            if (localApp != null && !localApp.isBlank()) {
+                return Path.of(localApp).resolve("WorkTimeBG");
+            }
+            return Path.of(System.getProperty("user.home")).resolve("AppData").resolve("Local").resolve("WorkTimeBG");
+        }
+        if (os.contains("mac")) {
+            return Path.of(System.getProperty("user.home"), "Library", "Application Support", "WorkTimeBG");
+        }
+        return Path.of(System.getProperty("user.home")).resolve(".local").resolve("share").resolve("WorkTimeBG");
     }
 
     public static void init() throws SQLException {
