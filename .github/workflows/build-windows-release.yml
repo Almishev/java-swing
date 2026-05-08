@@ -1,11 +1,17 @@
-# Създава WorkTimeBG-*.exe (jpackage на Windows), след като версията в pom се обнови.
-# Комитът само с pom от job "Bump project version" променя paths pom.xml → този workflow се пуска
-# при нов snapshot номер след промяни в Java кода на main/master.
+# Комплект WorkTimeBG-*.exe (jpackage под Windows).
 #
-# Permissions: Repo → Settings → Actions → General → Workflow permissions = read/write.
+# Push с GITHUB_TOKEN (както при Bump bot) по подразбиране НЕ пускат други workflows.
+# Затова вторият тригер е workflow_run след "Bump project version".
+# При ръчен push само към pom.xml (локално, не-bot) продължава да важи paths: pom.xml.
+#
+# Settings → Actions → General: Workflow permissions = read and write за push на release/tag.
 name: Build Windows exe and GitHub Release
 
 on:
+  workflow_run:
+    workflows: ["Bump project version"]
+    types: [completed]
+    branches: [main, master]
   push:
     branches: [main, master]
     paths:
@@ -17,10 +23,30 @@ permissions:
 
 jobs:
   release-exe:
+    if: >-
+      github.event_name == 'workflow_dispatch' ||
+      github.event_name == 'push' ||
+      (github.event.workflow_run.conclusion == 'success')
     runs-on: windows-latest
 
     steps:
-      - uses: actions/checkout@v4
+      - name: Checkout (sync tip after bump bot push)
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Point to latest default branch tip (след pom push от bot)
+        if: github.event_name == 'workflow_run'
+        shell: bash
+        env:
+          SYNC_BRANCH: ${{ github.event.workflow_run.head_branch }}
+        run: |
+          set -euo pipefail
+          branch="${SYNC_BRANCH:-main}"
+          git fetch origin "$branch"
+          git checkout "$branch"
+          git reset --hard "origin/$branch"
 
       - uses: actions/setup-java@v4
         with:
