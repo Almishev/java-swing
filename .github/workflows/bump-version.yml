@@ -1,0 +1,50 @@
+# Increments the patch in pom.xml (swing-system <version>) after Java source changes land on the default branch.
+# The follow-up commit only touches pom.xml, so it does not match paths: src/** and this workflow does not run again.
+#
+# Repo settings → Actions → General: "Workflow permissions" must allow read and write if your org defaults read-only.
+name: Bump project version
+
+on:
+  push:
+    branches: [main, master]
+    paths:
+      - 'src/**'
+
+permissions:
+  contents: write
+
+concurrency:
+  group: bump-version-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  bump:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Bump patch in pom.xml
+        id: ver
+        run: |
+          set -euo pipefail
+          VERSION="$(python3 .github/scripts/bump-pom-patch.py)"
+          echo "new_version=${VERSION}" >> "${GITHUB_OUTPUT}"
+
+      - name: Commit and push
+        env:
+          NEW_VERSION: ${{ steps.ver.outputs.new_version }}
+        run: |
+          set -euo pipefail
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add pom.xml
+          if git diff --staged --quiet; then
+            echo "Nothing to commit (pom unchanged)."
+            exit 0
+          fi
+          git commit -m "chore: bump version to ${NEW_VERSION} [skip ci]"
+          git push

@@ -19,7 +19,7 @@ public final class ShiftRepo {
         if (end == null) throw new SQLException("Краят на смяната е задължителен.");
         if (!end.isAfter(start)) throw new SQLException("Краят трябва да е след началото.");
         try (Connection c = Db.connect()) {
-            validateNoOverlap(c, employeeId, start, end, null);
+            validateNoOverlapAmongClosedShifts(c, employeeId, start, end, null);
             try (PreparedStatement ps = c.prepareStatement(
                     "INSERT INTO shift(employee_id, start_time, end_time) VALUES (?,?,?)",
                     new String[]{"ID"})) {
@@ -36,15 +36,17 @@ public final class ShiftRepo {
     }
 
     public long startShift(long employeeId, LocalDateTime start) throws SQLException {
-        try (Connection c = Db.connect();
-             PreparedStatement ps = c.prepareStatement(
-                     "INSERT INTO shift(employee_id, start_time, end_time) VALUES (?,?,NULL)",
-                     new String[]{"ID"})) {
-            ps.setLong(1, employeeId);
-            ps.setTimestamp(2, Timestamp.valueOf(start));
-            ps.executeUpdate();
-            try (ResultSet keys = ps.getGeneratedKeys()) {
-                if (keys.next()) return keys.getLong(1);
+        try (Connection c = Db.connect()) {
+            assertNoOrphanOpenShiftElsewhere(c, employeeId, null);
+            try (PreparedStatement ps = c.prepareStatement(
+                    "INSERT INTO shift(employee_id, start_time, end_time) VALUES (?,?,NULL)",
+                    new String[]{"ID"})) {
+                ps.setLong(1, employeeId);
+                ps.setTimestamp(2, Timestamp.valueOf(start));
+                ps.executeUpdate();
+                try (ResultSet keys = ps.getGeneratedKeys()) {
+                    if (keys.next()) return keys.getLong(1);
+                }
             }
         }
         throw new SQLException("Неуспешен запис за начало.");
@@ -59,7 +61,7 @@ public final class ShiftRepo {
                     long employeeId = rs.getLong("employee_id");
                     LocalDateTime start = rs.getTimestamp("start_time").toLocalDateTime();
                     if (!end.isAfter(start)) throw new SQLException("Краят трябва да е след началото.");
-                    validateNoOverlap(c, employeeId, start, end, shiftId);
+                    validateNoOverlapAmongClosedShifts(c, employeeId, start, end, shiftId);
                 }
             }
             try (PreparedStatement ps = c.prepareStatement("UPDATE shift SET end_time=? WHERE id=?")) {
@@ -81,8 +83,10 @@ public final class ShiftRepo {
                     employeeId = rs.getLong("employee_id");
                 }
             }
-            if (end != null) {
-                validateNoOverlap(c, employeeId, start, end, shiftId);
+            if (end == null) {
+                assertNoOrphanOpenShiftElsewhere(c, employeeId, shiftId);
+            } else {
+                validateNoOverlapAmongClosedShifts(c, employeeId, start, end, shiftId);
             }
             try (PreparedStatement ps = c.prepareStatement("UPDATE shift SET start_time=?, end_time=? WHERE id=?")) {
                 ps.setTimestamp(1, Timestamp.valueOf(start));
@@ -163,13 +167,46 @@ public final class ShiftRepo {
         }
     }
 
-    private void validateNoOverlap(Connection c, long employeeId, LocalDateTime start, LocalDateTime end, Long excludeShiftId) throws SQLException {
+    /**
+     * Blocks creating a second "open" shift ({@code end_time IS NULL}). Stale unfinished rows must be closed in the diary first.
+     */
+    private void assertNoOrphanOpenShiftElsewhere(Connection c, long employeeId, Long excludeShiftId) throws SQLException {
+        String sql =
+                "SELECT id, start_time FROM shift " +
+                "WHERE employee_id = ? AND end_time IS NULL " +
+                "AND (? IS NULL OR id <> ?) " +
+                "LIMIT 1";
+        try (PreparedStatement ps = c.prepareStatement(sql)) {
+            ps.setLong(1, employeeId);
+            if (excludeShiftId == null) {
+                ps.setNull(2, java.sql.Types.BIGINT);
+                ps.setNull(3, java.sql.Types.BIGINT);
+            } else {
+                ps.setLong(2, excludeShiftId);
+                ps.setLong(3, excludeShiftId);
+            }
+            try (ResultSet rs = ps.executeQuery()) {
+                if (rs.next()) {
+                    LocalDateTime openStart = rs.getTimestamp("start_time").toLocalDateTime();
+                    String when = openStart.toString().replace('T', ' ');
+                    throw new SQLException(
+                            "Има неприключена смяна от " + when + " без край. Изберете тази дата в календара "
+                                    + "и задайте час за край (или поправете записа), после запазете.");
+                }
+            }
+        }
+    }
+
+    /** Overlap only among finished shifts ({@code end_time} set). Open shifts must not widen to year 9999. */
+    private void validateNoOverlapAmongClosedShifts(Connection c, long employeeId, LocalDateTime start, LocalDateTime end,
+                                                    Long excludeShiftId) throws SQLException {
         String sql =
                 "SELECT start_time, end_time FROM shift " +
                 "WHERE employee_id = ? " +
                 "AND (? IS NULL OR id <> ?) " +
+                "AND end_time IS NOT NULL " +
                 "AND start_time < ? " +
-                "AND COALESCE(end_time, TIMESTAMP '9999-12-31 23:59:59') > ? " +
+                "AND end_time > ? " +
                 "LIMIT 1";
         try (PreparedStatement ps = c.prepareStatement(sql)) {
             ps.setLong(1, employeeId);
@@ -185,10 +222,10 @@ public final class ShiftRepo {
             try (ResultSet rs = ps.executeQuery()) {
                 if (rs.next()) {
                     LocalDateTime conflictStart = rs.getTimestamp("start_time").toLocalDateTime();
-                    java.sql.Timestamp conflictEndTs = rs.getTimestamp("end_time");
-                    String conflictEndText = conflictEndTs == null ? "без край" : conflictEndTs.toLocalDateTime().toString().replace('T', ' ');
-                    String conflictStartText = conflictStart.toString().replace('T', ' ');
-                    throw new SQLException("Смяната се припокрива със съществуваща смяна: " + conflictStartText + " - " + conflictEndText);
+                    LocalDateTime conflictEnd = rs.getTimestamp("end_time").toLocalDateTime();
+                    throw new SQLException("Смяната се припокрива със съществуваща смяна: "
+                            + conflictStart.toString().replace('T', ' ') + " - "
+                            + conflictEnd.toString().replace('T', ' '));
                 }
             }
         }
