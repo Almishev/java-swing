@@ -1,0 +1,133 @@
+# След промени в Java: bump на patch в pom + build на WorkTimeBG .exe + GitHub Release.
+# Един workflow — няма зависимост от workflow_run (често не се задейства).
+#
+# Settings → Actions → General → Workflow permissions: Read and write.
+name: Bump version and release Windows exe
+
+on:
+  push:
+    branches: [main, master]
+    paths:
+      - 'src/**'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: bump-release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  bump:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Bump patch in pom.xml
+        if: github.event_name == 'push'
+        id: ver
+        run: |
+          set -euo pipefail
+          VERSION="$(python3 .github/scripts/bump-pom-patch.py)"
+          echo "new_version=${VERSION}" >> "${GITHUB_OUTPUT}"
+
+      - name: Commit and push
+        if: github.event_name == 'push'
+        env:
+          NEW_VERSION: ${{ steps.ver.outputs.new_version }}
+        run: |
+          set -euo pipefail
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add pom.xml
+          if git diff --staged --quiet; then
+            echo "Nothing to commit (pom unchanged)."
+            exit 0
+          fi
+          git commit -m "chore: bump version to ${NEW_VERSION} [skip ci]"
+          git push
+
+      - name: Manual dispatch — без bump
+        if: github.event_name == 'workflow_dispatch'
+        run: echo "Само build/release от текущия pom на origin (няма bump)."
+
+  release-exe:
+    needs: bump
+    if: needs.bump.result == 'success'
+    runs-on: windows-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Sync to latest commit on branch (вкл. pom bump от предишния job)
+        shell: bash
+        run: |
+          set -euo pipefail
+          branch="${GITHUB_REF_NAME:-main}"
+          git fetch origin "$branch"
+          git checkout "$branch"
+          git reset --hard "origin/$branch"
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+          cache: maven
+
+      - uses: stCarolas/setup-maven@v5
+        with:
+          maven-version: 3.9.9
+
+      - name: Install WiX Toolset (jpackage --type exe)
+        shell: pwsh
+        run: choco install wixtoolset -y --no-progress
+
+      - name: Package shaded JAR
+        run: mvn -ntp -B package -DskipTests
+
+      - name: Read versions
+        id: pver
+        shell: pwsh
+        run: |
+          $pomRaw = (& mvn -ntp -q -DforceStdout help:evaluate "-Dexpression=project.version").Trim()
+          $appVer = $pomRaw -replace '-SNAPSHOT$',''
+          "pom_ver=$pomRaw" >> $env:GITHUB_OUTPUT
+          "app_ver=$appVer" >> $env:GITHUB_OUTPUT
+
+      - name: jpackage installer
+        env:
+          POM_VER: ${{ steps.pver.outputs.pom_ver }}
+          APP_VER: ${{ steps.pver.outputs.app_ver }}
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Path jpkg-input, dist -Force | Out-Null
+          Copy-Item "target/swing-system-$env:POM_VER.jar" -Destination jpkg-input/
+          & jpackage `
+            --type exe `
+            --input jpkg-input `
+            --name WorkTimeBG `
+            --main-jar "swing-system-$env:POM_VER.jar" `
+            --main-class bg.restaurant.swing.Main `
+            --app-version $env:APP_VER `
+            --vendor "Restaurant" `
+            --dest dist
+
+      - name: Publish release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: v${{ steps.pver.outputs.app_ver }}
+          name: WorkTimeBG v${{ steps.pver.outputs.app_ver }}
+          generate_release_notes: true
+          make_latest: true
+          files: dist/WorkTimeBG*.exe
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

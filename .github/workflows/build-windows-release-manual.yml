@@ -1,0 +1,73 @@
+# Само ръчен rebuild на .exe от текущия main (без bump на версията).
+# Използвай при провал на основния pipeline или за повторен опит за същия tag (първо изтрий стария release/tag ако е нужно).
+name: Build Windows exe (manual only)
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  release-exe:
+    runs-on: windows-latest
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+          cache: maven
+
+      - uses: stCarolas/setup-maven@v5
+        with:
+          maven-version: 3.9.9
+
+      - name: Install WiX Toolset
+        shell: pwsh
+        run: choco install wixtoolset -y --no-progress
+
+      - name: Package shaded JAR
+        run: mvn -ntp -B package -DskipTests
+
+      - name: Read versions
+        id: pver
+        shell: pwsh
+        run: |
+          $pomRaw = (& mvn -ntp -q -DforceStdout help:evaluate "-Dexpression=project.version").Trim()
+          $appVer = $pomRaw -replace '-SNAPSHOT$',''
+          "pom_ver=$pomRaw" >> $env:GITHUB_OUTPUT
+          "app_ver=$appVer" >> $env:GITHUB_OUTPUT
+
+      - name: jpackage
+        env:
+          POM_VER: ${{ steps.pver.outputs.pom_ver }}
+          APP_VER: ${{ steps.pver.outputs.app_ver }}
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Path jpkg-input, dist -Force | Out-Null
+          Copy-Item "target/swing-system-$env:POM_VER.jar" -Destination jpkg-input/
+          & jpackage `
+            --type exe `
+            --input jpkg-input `
+            --name WorkTimeBG `
+            --main-jar "swing-system-$env:POM_VER.jar" `
+            --main-class bg.restaurant.swing.Main `
+            --app-version $env:APP_VER `
+            --vendor "Restaurant" `
+            --dest dist
+
+      - name: Publish release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: v${{ steps.pver.outputs.app_ver }}
+          name: WorkTimeBG v${{ steps.pver.outputs.app_ver }}
+          generate_release_notes: true
+          make_latest: true
+          files: dist/WorkTimeBG*.exe
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
