@@ -15,6 +15,7 @@ import java.sql.SQLException;
 
 public class Main {
     public static void main(String[] args) {
+        Thread.setDefaultUncaughtExceptionHandler((t, e) -> UiUtil.showError(null, e));
         UiUtil.runOnEdt(() -> {
             try {
                 Db.init();
@@ -25,9 +26,13 @@ public class Main {
             } catch (Exception ignored) {
                 // continue with default LAF when only look-and-feel fails
             }
-            UiTheme.installGlobalGuards();
-            increaseUiFont(16);
-            startAppSessionLoop();
+            try {
+                UiTheme.installGlobalGuards();
+                increaseUiFont(16);
+                startAppSessionLoop();
+            } catch (Throwable t) {
+                UiUtil.showError(null, t);
+            }
         });
     }
 
