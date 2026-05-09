@@ -1,5 +1,5 @@
-# След промени в Java: bump на patch в pom + build на WorkTimeBG .exe + GitHub Release.
-# Един workflow — няма зависимост от workflow_run (често не се задейства).
+# След промени в Java или в самите workflows: bump + .exe + GitHub Release.
+# ВАЖНО: paths трябва да включва .github/workflows — иначе push само към YAML не пуска нищо.
 #
 # Settings → Actions → General → Workflow permissions: Read and write.
 name: Bump version and release Windows exe
@@ -9,6 +9,7 @@ on:
     branches: [main, master]
     paths:
       - 'src/**'
+      - '.github/workflows/**'
   workflow_dispatch:
 
 permissions:
