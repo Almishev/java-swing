@@ -26,9 +26,15 @@ bin/
 .vscode/
 
 ### Mac OS ###
-.DS_Storepackage/
+.DS_Store
+package/
+
 out/
 out-classes/
 target/
+dist/
+jpkg-input/
+dependency-reduced-pom.xml
+
 data/*.db
 data/*.trace.db

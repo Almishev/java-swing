@@ -34,6 +34,18 @@ jobs:
       - name: Package shaded JAR
         run: mvn -ntp -B package -DskipTests
 
+      - name: Verify shaded JAR contains Main (blocks broken installers)
+        shell: pwsh
+        run: |
+          $pomVer = (& mvn -ntp -q -DforceStdout help:evaluate "-Dexpression=project.version").Trim()
+          $jar = "target/swing-system-$pomVer.jar"
+          if (-not (Test-Path $jar)) { throw "Missing $jar" }
+          $hit = jar tf $jar | Select-String -SimpleMatch "bg/restaurant/swing/Main.class"
+          if (-not $hit) {
+            throw "Shaded JAR missing bg/restaurant/swing/Main.class. Ensure pom.xml has <sourceDirectory>src</sourceDirectory>."
+          }
+          Write-Host "OK: entrypoint present in $jar"
+
       - name: Read versions
         id: pver
         shell: pwsh
