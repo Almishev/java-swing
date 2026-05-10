@@ -6,7 +6,7 @@
 
     <groupId>bg.restaurant</groupId>
     <artifactId>swing-system</artifactId>
-    <version>1.0.4-SNAPSHOT</version>
+    <version>1.0.5-SNAPSHOT</version>
 
     <properties>
         <maven.compiler.source>17</maven.compiler.source>
